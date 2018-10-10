@@ -1,8 +1,3 @@
-#
-# Class Interpreter 0
-# Base interpreter with numbers, plus, and minus
-#
-
 module RudInt
 
 push!(LOAD_PATH, pwd())
