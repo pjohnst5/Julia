@@ -1,0 +1,28 @@
+        Correct output:
+1. Pass
+2. Error
+3. Error
+4. Main.ExtInt.NumVal(3)
+5. Main.ExtInt.NumVal(1)
+6. Pass
+7. Pass
+8. Error
+9. Error
+10. Main.ExtInt.NumVal(4)
+
+        Your output:
+1. Pass
+2. Error
+3. Error
+4. Main.ExtInt.NumVal(3)
+5. Main.ExtInt.NumVal(1)
+6. Pass
+7. Pass
+8. Error
+9. Error
+10. Main.ExtInt.NumVal(4)
+
+        Failed tests:
+
+        Grade:
+10 out of 10

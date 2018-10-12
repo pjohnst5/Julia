@@ -4,7 +4,7 @@ push!(LOAD_PATH, pwd())
 
 using Error
 using Lexer
-export parse, calc, interp, interpf, symbol_check
+export parse, calc, interp, interpf
 
 # ============ lang Functions =================================================================
 function collatz( n::Real )
@@ -46,8 +46,11 @@ function with_helper(expr2)
 	dict = Dict{Symbol,AE}()
 	for i = 1:length(expr2)
 		symbol = symbol_check(expr2[i][1])
-		if (length(expr2[i])) == 1)
+		if (length(expr2[i]) == 1)
 			throw(LispError("No AE following id in with"))
+		end
+		if haskey(dict, symbol)
+			throw(ListError("Can't have duplicate symbols in with"))
 		end
 		ae = parse(expr2[i][2])
 		dict[symbol] = ae
@@ -55,6 +58,25 @@ function with_helper(expr2)
 	return dict
 end
 
+function sym2AE_to_sym2Val(sym2AE, env)
+	dict = Dict{Symbol,RetVal}()
+	for k in keys(sym2AE)
+		val = calc(sym2AE[k], env)
+		dict[k] = val
+    end
+	return dict
+end
+
+function FAN_helper(formals, argExprs, env)
+	if length(formals) != length(argExprs)
+		throw(LispError("Bad arity in FAN"))
+	end
+	dict = Dict{Symbol, RetVal}()
+	for i = 1:length(formals)
+		dict[formals[i]] = calc(argExprs[i], env)
+	end
+	return dict
+end
 
 
 # ============ Nodes =====================================================================
@@ -91,21 +113,18 @@ struct If0Node <: AE
     nzerobranch::AE
 end
 
-# <AE> ::= (with <id> <AE> <AE>)
 # <AE> ::= (with ( (id <AE>)* ) <AE>)
 struct WithNode <: AE
 	sym2AE::Dict{Symbol,AE}
   body::AE
 end
 
-# <AE> ::= (lambda <id> <AE>)
 # <AE> ::= (lambda (id*) <AE>)
 struct FuncDefNode <: AE
   formal::Array{Symbol}  #Can have multiple of these, inside each VarRefNode is a symbol
 	body::AE
 end
 
-# <AE> ::= (<AE> <AE>)
 # <AE> ::= (<AE> <AE>*)
 struct FuncAppNode <: AE
   fun_expr::AE
@@ -126,7 +145,7 @@ end
 
 struct ClosureVal <: RetVal
   formal::Array{Symbol} #Can have multiple formals to function definition
-	body::AE
+  body::AE
   env::Environment
 end
 
@@ -136,7 +155,7 @@ struct EmptyEnv <: Environment
 end
 
 struct ExtendedEnv <: Environment
-	sym2Val::Dict{Symbol,RetVal} #multiple
+  sym2Val::Dict{Symbol,RetVal} #multiple
   parent::Environment
 end
 
@@ -156,13 +175,15 @@ end
 function parse( expr::Array{Any} )
 	#lambda, With, and Binop check
 	if length(expr) == 3
+
 		if expr[1] == :lambda
-			fomals = map(symbol_check, expr[2])
+			formals = map(symbol_check, expr[2])
 			return FuncDefNode( formals, parse(expr[3]) )
+
 		elseif expr[1] == :with
-			#TODO handle case where expr[2] is arrays of bindings
 			dict = with_helper(expr[2])
 			return WithNode(dict, parse(expr[3]))
+
 		elseif haskey(binops, expr[1])
 			return BinopNode(binops[expr[1]], parse( expr[2] ), parse( expr[3] ) )
 		end
@@ -171,14 +192,14 @@ function parse( expr::Array{Any} )
 	#Unop check
 	if length(expr) == 2
 		if haskey(unops, expr[1])
- 			return UnopNode(symbols[expr[1]], parse(expr[2]))
+ 			return UnopNode(unops[expr[1]], parse(expr[2]))
 		end
 	end
 
 	#If0 check
 	if length(expr) == 4
 		if expr[1] == :if0
-			return If0Node( parse(expr[1]), parse(expr[3]) , parse(expr[4]) )
+			return If0Node( parse(expr[2]), parse(expr[3]) , parse(expr[4]) )
 		end
 	end
 
@@ -187,31 +208,8 @@ function parse( expr::Array{Any} )
 		throw(LispError("Bad arity for known expression"))
 	end
 
-	args = map(parse_AE_helper, expr[2:end])
-	return FuncAppNode( parse(expr[1]), args )
-
-
-		# if expr[1] == :+
-    #     return PlusNode( parse( expr[2] ), parse( expr[3] ) )
-	#
-    # elseif expr[1] == :-
-    #     return MinusNode( parse( expr[2] ), parse( expr[3] ) )
-	#
-    # elseif expr[1] == :if0
-    #     return If0Node( parse(expr[2]), parse(expr[3]) , parse(expr[4]) )
-	#
-    # elseif expr[1] == :with
-    #     return WithNode( expr[2], parse(expr[3]), parse(expr[4]) )
-	#
-    # elseif expr[1] == :lambda
-    #     return FuncDefNode( expr[2], parse(expr[3]) )
-	#
-    # else
-    #     return FuncAppNode( parse(expr[1]), parse(expr[2]) )
-	#
-    # end
-
-    throw(LispError("Unknown operator!"))
+	aes = map(parse, expr[2:end])
+	return FuncAppNode( parse(expr[1]), aes )
 end
 
 function parse( expr::Any )
@@ -225,22 +223,33 @@ function calc( ast::NumNode, env::Environment )
 end
 
 function calc( ast::BinopNode, env::Environment )
-	if ast.op == symbols[:/] && calc(ast.rhs) == 0
+	left = calc(ast.lhs, env)
+	right = calc(ast.rhs, env)
+	if typeof(left) != NumVal || typeof(right) != NumVal
+		throw(LispError("Binop sides must be NumVals"))
+	end
+	if ast.op == binops[:/] && right.n == 0
 		throw(LispError("Divide by zero error"))
 	end
-		#TODO: error checking, see if calc of left is NumVal etc.
-    return ast.op(calc( ast.lhs ), calc( ast.rhs ))
+  return NumVal(ast.op(left.n, right.n))
 end
 
 function calc(ast::UnopNode, env::Environment)
-	if ast.op == symbols[:collatz] && calc(ast.side) < 0
+	side = calc(ast.side, env)
+	if typeof(side) != NumVal
+		throw(LispError("Unop must have numVal"))
+	end
+	if ast.op == unops[:collatz] && side.n < 0
 		throw(LispError("Collatz negative error"))
 	end
-	return ast.op(calc(ast.side))
+	return NumVal(ast.op(side.n))
 end
 
 function calc( ast::If0Node, env::Environment )
     cond = calc( ast.cond, env )
+		if typeof(cond) != NumVal
+			throw(LispError("If0 condition must be NumVal"))
+		end
     if cond.n == 0
         return calc( ast.zerobranch, env )
     else
@@ -249,8 +258,10 @@ function calc( ast::If0Node, env::Environment )
 end
 
 function calc( ast::WithNode, env::Environment )
-    binding_val = calc( ast.binding_expr, env )
-    ext_env = ExtendedEnv( ast.sym, binding_val, env )
+		#Given Symbol to AE dictionary, returns
+		#Symbol to RetVal dictionary
+		sym2Val = sym2AE_to_sym2Val(ast.sym2AE, env)
+    ext_env = ExtendedEnv( sym2Val, env )
     return calc( ast.body, ext_env )
 end
 
@@ -259,10 +270,10 @@ function calc( ast::VarRefNode, env::EmptyEnv )
 end
 
 function calc( ast::VarRefNode, env::ExtendedEnv )
-		#instead, look to see if ast.sym is in list of env.sym
+		# instead, look to see if ast.sym is in list of env.sym
 		# and make sure it only appears once
-    if ast.sym == env.sym
-        return env.val
+    if haskey(env.sym2Val, ast.sym)
+        return env.sym2Val[ast.sym]
     else
         return calc( ast, env.parent )
     end
@@ -274,10 +285,13 @@ end
 
 function calc( ast::FuncAppNode, env::Environment )
     closure_val = calc( ast.fun_expr, env )
-    actual_parameter = calc( ast.arg_expr, env )
-    ext_env = ExtendedEnv( closure_val.formal,
-                           actual_parameter,
-                           closure_val.env )
+		if typeof(closure_val) != ClosureVal
+			throw(LispError("First AE of FAN must be closure"))
+		end
+		#make dictionary of closures formal symbols
+		#to what you get after calcing each ast.arg_expr
+		dict = FAN_helper(closure_val.formal, ast.arg_expr, env)
+    ext_env = ExtendedEnv(dict, closure_val.env )
     return calc( closure_val.body, ext_env )
 end
 
