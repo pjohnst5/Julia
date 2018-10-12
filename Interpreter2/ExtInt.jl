@@ -1,5 +1,3 @@
-############################################ EDIT MEEE #########################################
-
 module ExtInt
 
 push!(LOAD_PATH, pwd())
@@ -9,7 +7,7 @@ using Lexer
 export parse, calc, interp, interpf
 
 #
-# ============ Functions ==================
+# ============ Functions =================================================================
 #
 function collatz( n::Real )
   return collatz_helper( n, 0 )
@@ -26,12 +24,19 @@ function collatz_helper( n::Real, num_iters::Int )
   end
 end
 
-# =========== Dictionary ===============
-symbols = Dict(:+ => +, :- => -, :* => *, :/ => /, :mod => mod, :collatz => collatz)
+function parse_helper(x)
+	parse(x)
+end
 
 
+# =========== Symbols dictionaries =====================================================
+binops = Dict(:+ => +, :- => -, :* => *, :/ => /, :mod => mod)
 
-# ============ Classes ====================
+unops = Dict(:collatz => collatz, :- => -)
+
+other = Dict(:if0 => "taken", :with => "taken", :lambda => "taken")
+
+# ============ Nodes =====================================================================
 abstract type AE
 end
 
@@ -40,27 +45,22 @@ struct NumNode <: AE
     n::Real
 end
 
-# # <AE> ::= (+ <AE> <AE>)
-# struct PlusNode <: AE
-#     lhs::AE
-#     rhs::AE
-# end
-#
-# # <AE> ::= (- <AE> <AE>)
-# struct MinusNode <: AE
-#     lhs::AE
-#     rhs::AE
-# end
-
+# <AE> ::= + through mod
 struct BinopNode <: AE
 	op::Function
 	lhs::AE
 	rhs::AE
 end
 
+#<AE> ::= collatz and -
 struct UnopNode <: AE
 	op::Function
 	side::AE
+end
+
+# <AE> ::= <id>
+struct VarRefNode <: AE
+    sym::Symbol
 end
 
 # <AE> ::= (if0 <AE> <AE> <AE>)
@@ -73,20 +73,16 @@ end
 # <AE> ::= (with <id> <AE> <AE>)
 # <AE> ::= (with ( (id <AE>)* ) <AE>)
 struct WithNode <: AE
-    sym::Symbol
-    binding_expr::AE
+		sym2AE::Dict{Symbol,AE}()
+    #sym::Symbol           #Can have multiple of these connected to
+    #binding_expr::AE      #these
     body::AE
-end
-
-# <AE> ::= <id>
-struct VarRefNode <: AE
-    sym::Symbol
 end
 
 # <AE> ::= (lambda <id> <AE>)
 # <AE> ::= (lambda (id*) <AE>)
 struct FuncDefNode <: AE
-    formal::Symbol
+    formal::Symbol[]  #Can have multiple of these
     body::AE
 end
 
@@ -94,11 +90,11 @@ end
 # <AE> ::= (<AE> <AE>*)
 struct FuncAppNode <: AE
     fun_expr::AE
-    arg_expr::AE
+    arg_expr::AE[] #Can have multiple of these
 end
 
 
-# ============== Return values ===========================
+# ============== Return values (Numbers and Closures) ===============================================
 abstract type RetVal
 end
 
@@ -110,55 +106,93 @@ struct NumVal <: RetVal
 end
 
 struct ClosureVal <: RetVal
-    formal::Symbol
+    formal::Symbol[]  #Should also be a list of symbols?
     body::AE
     env::Environment
 end
 
 
-# =============== Environments ==========================
+# =============== Environments ======================================================================
 struct EmptyEnv <: Environment
 end
 
 struct ExtendedEnv <: Environment
-    sym::Symbol
-    val::RetVal
+		sym2Val::Dict{Symbol,RetVal}()
+		#sym::Symbol  #Can have multiple of these connect to
+    #val::RetVal  #these
     parent::Environment
 end
 
-#
-# ==================================================
-#
 
+# ================== Parsing ========================================================================
 function parse( expr::Number )
     return NumNode( expr )
 end
 
 function parse( expr::Symbol )
+		if haskey(binops, expr) || haskey(unops, expr) || haskey(other, expr)
+			throw(LispError("That's a keyword bruh"))
+		end
     return VarRefNode( expr )
 end
 
 function parse( expr::Array{Any} )
+	#lambda, With, and Binop check
+	if length(expr) == 3
+		if expr[1] == :lambda
+				#TODO handle case where expr[2] is an array of symbols
+				fomals = map(parse_helper, expr[2])
+			return FuncDefNode( expr[2], parse(expr[3]) )
+		elseif expr[1] == :with
+				#TODO handle case where expr[2] is arrays of bindings
+			return
+		elseif haskey(binops, expr[1])
+			return BinopNode(symbols[expr[1]], parse( expr[2] ), parse( expr[3] ) )
+		end
+	end
 
-    if expr[1] == :+
-        return PlusNode( parse( expr[2] ), parse( expr[3] ) )
+	#Unop check
+	if length(expr) == 2
+		if haskey(unops, expr[1])
+ 			return UnopNode(symbols[expr[1]], parse(expr[2]))
+		end
+	end
 
-    elseif expr[1] == :-
-        return MinusNode( parse( expr[2] ), parse( expr[3] ) )
+	#If0 check
+	if length(expr) == 4
+		if expr[1] == :if0
+			return If0Node( parse(expr[1]), parse(expr[3]) , parse(expr[4]) )
+		end
+	end
 
-    elseif expr[1] == :if0
-        return If0Node( parse(expr[2]), parse(expr[3]) , parse(expr[4]) )
+	#If it got here and it's a keyword, bad arity
+	if haskey(binops, expr) || haskey(unops, expr) || haskey(other, expr)
+		throw(LispError("Bad arity for known expression"))
+	end
 
-    elseif expr[1] == :with
-        return WithNode( expr[2], parse(expr[3]), parse(expr[4]) )
+	args = map(parse_helper, expr[2:end])
+	return FuncAppNode( parse(expr[1]), args )
 
-    elseif expr[1] == :lambda
-        return FuncDefNode( expr[2], parse(expr[3]) )
 
-    else
-        return FuncAppNode( parse(expr[1]), parse(expr[2]) )
-
-    end
+		# if expr[1] == :+
+    #     return PlusNode( parse( expr[2] ), parse( expr[3] ) )
+	#
+    # elseif expr[1] == :-
+    #     return MinusNode( parse( expr[2] ), parse( expr[3] ) )
+	#
+    # elseif expr[1] == :if0
+    #     return If0Node( parse(expr[2]), parse(expr[3]) , parse(expr[4]) )
+	#
+    # elseif expr[1] == :with
+    #     return WithNode( expr[2], parse(expr[3]), parse(expr[4]) )
+	#
+    # elseif expr[1] == :lambda
+    #     return FuncDefNode( expr[2], parse(expr[3]) )
+	#
+    # else
+    #     return FuncAppNode( parse(expr[1]), parse(expr[2]) )
+	#
+    # end
 
     throw(LispError("Unknown operator!"))
 end
@@ -167,24 +201,25 @@ function parse( expr::Any )
   throw( LispError("Invalid type $expr") )
 end
 
-#
-# ==================================================
-#
 
+# ============= Calculating ======================================================================
 function calc( ast::NumNode, env::Environment )
     return NumVal( ast.n )
 end
 
-function calc( ast::PlusNode, env::Environment )
-    lhs = calc( ast.lhs, env )
-    rhs = calc( ast.rhs, env )
-    return  NumVal( lhs.n + rhs.n )
+function calc( ast::BinopNode, env::Environment )
+	if ast.op == symbols[:/] && calc(ast.rhs) == 0
+		throw(LispError("Divide by zero error"))
+	end
+		#TODO: error checking, see if calc of left is NumVal etc.
+    return ast.op(calc( ast.lhs ), calc( ast.rhs ))
 end
 
-function calc( ast::MinusNode, env::Environment )
-    lhs = calc( ast.lhs, env )
-    rhs = calc( ast.rhs, env )
-    return  NumVal( lhs.n - rhs.n )
+function calc(ast::UnopNode, env::Environment)
+	if ast.op == symbols[:collatz] && calc(ast.side) < 0
+		throw(LispError("Collatz negative error"))
+	end
+	return ast.op(calc(ast.side))
 end
 
 function calc( ast::If0Node, env::Environment )
@@ -207,6 +242,8 @@ function calc( ast::VarRefNode, env::EmptyEnv )
 end
 
 function calc( ast::VarRefNode, env::ExtendedEnv )
+		#instead, look to see if ast.sym is in list of env.sym
+		# and make sure it only appears once
     if ast.sym == env.sym
         return env.val
     else
@@ -231,10 +268,8 @@ function calc( ast::AE )
     return calc( ast, EmptyEnv() )
 end
 
-#
-# ==================================================
-#
 
+# =============== Interpreting =========================================================================
 function interp( cs::AbstractString )
     lxd = Lexer.lex( cs )
     ast = parse( lxd )
