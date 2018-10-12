@@ -4,11 +4,9 @@ push!(LOAD_PATH, pwd())
 
 using Error
 using Lexer
-export parse, calc, interp, interpf
+export parse, calc, interp, interpf, symbol_check
 
-#
-# ============ Functions =================================================================
-#
+# ============ lang Functions =================================================================
 function collatz( n::Real )
   return collatz_helper( n, 0 )
 end
@@ -24,17 +22,40 @@ function collatz_helper( n::Real, num_iters::Int )
   end
 end
 
-function parse_helper(x)
-	parse(x)
-end
 
-
-# =========== Symbols dictionaries =====================================================
+# =========== Symbol dictionaries =====================================================
 binops = Dict(:+ => +, :- => -, :* => *, :/ => /, :mod => mod)
 
 unops = Dict(:collatz => collatz, :- => -)
 
 other = Dict(:if0 => "taken", :with => "taken", :lambda => "taken")
+
+
+# =============== helper functions ======================================================
+function symbol_check(x)
+	if typeof(x) != Symbol
+		throw(LispError("Must be type Symbol"))
+	end
+	if haskey(binops, x) || haskey(unops, x) || haskey(other, x)
+		throw(LispError("That's a keyword bruh"))
+	end
+	return x
+end
+
+function with_helper(expr2)
+	dict = Dict{Symbol,AE}()
+	for i = 1:length(expr2)
+		symbol = symbol_check(expr2[i][1])
+		if (length(expr2[i])) == 1)
+			throw(LispError("No AE following id in with"))
+		end
+		ae = parse(expr2[i][2])
+		dict[symbol] = ae
+	end
+	return dict
+end
+
+
 
 # ============ Nodes =====================================================================
 abstract type AE
@@ -60,7 +81,7 @@ end
 
 # <AE> ::= <id>
 struct VarRefNode <: AE
-    sym::Symbol
+  sym::Symbol
 end
 
 # <AE> ::= (if0 <AE> <AE> <AE>)
@@ -73,24 +94,22 @@ end
 # <AE> ::= (with <id> <AE> <AE>)
 # <AE> ::= (with ( (id <AE>)* ) <AE>)
 struct WithNode <: AE
-		sym2AE::Dict{Symbol,AE}()
-    #sym::Symbol           #Can have multiple of these connected to
-    #binding_expr::AE      #these
-    body::AE
+	sym2AE::Dict{Symbol,AE}
+  body::AE
 end
 
 # <AE> ::= (lambda <id> <AE>)
 # <AE> ::= (lambda (id*) <AE>)
 struct FuncDefNode <: AE
-    formal::Symbol[]  #Can have multiple of these
-    body::AE
+  formal::Array{Symbol}  #Can have multiple of these, inside each VarRefNode is a symbol
+	body::AE
 end
 
 # <AE> ::= (<AE> <AE>)
 # <AE> ::= (<AE> <AE>*)
 struct FuncAppNode <: AE
-    fun_expr::AE
-    arg_expr::AE[] #Can have multiple of these
+  fun_expr::AE
+  arg_expr::Array{AE} #Can have multiple of these
 end
 
 
@@ -102,13 +121,13 @@ abstract type Environment
 end
 
 struct NumVal <: RetVal
-    n::Real
+  n::Real
 end
 
 struct ClosureVal <: RetVal
-    formal::Symbol[]  #Should also be a list of symbols?
-    body::AE
-    env::Environment
+  formal::Array{Symbol} #Can have multiple formals to function definition
+	body::AE
+  env::Environment
 end
 
 
@@ -117,37 +136,35 @@ struct EmptyEnv <: Environment
 end
 
 struct ExtendedEnv <: Environment
-		sym2Val::Dict{Symbol,RetVal}()
-		#sym::Symbol  #Can have multiple of these connect to
-    #val::RetVal  #these
-    parent::Environment
+	sym2Val::Dict{Symbol,RetVal} #multiple
+  parent::Environment
 end
 
 
 # ================== Parsing ========================================================================
 function parse( expr::Number )
-    return NumNode( expr )
+  return NumNode( expr )
 end
 
 function parse( expr::Symbol )
-		if haskey(binops, expr) || haskey(unops, expr) || haskey(other, expr)
-			throw(LispError("That's a keyword bruh"))
-		end
-    return VarRefNode( expr )
+	if haskey(binops, expr) || haskey(unops, expr) || haskey(other, expr)
+		throw(LispError("That's a keyword bruh"))
+	end
+  return VarRefNode( expr )
 end
 
 function parse( expr::Array{Any} )
 	#lambda, With, and Binop check
 	if length(expr) == 3
 		if expr[1] == :lambda
-				#TODO handle case where expr[2] is an array of symbols
-				fomals = map(parse_helper, expr[2])
-			return FuncDefNode( expr[2], parse(expr[3]) )
+			fomals = map(symbol_check, expr[2])
+			return FuncDefNode( formals, parse(expr[3]) )
 		elseif expr[1] == :with
-				#TODO handle case where expr[2] is arrays of bindings
-			return
+			#TODO handle case where expr[2] is arrays of bindings
+			dict = with_helper(expr[2])
+			return WithNode(dict, parse(expr[3]))
 		elseif haskey(binops, expr[1])
-			return BinopNode(symbols[expr[1]], parse( expr[2] ), parse( expr[3] ) )
+			return BinopNode(binops[expr[1]], parse( expr[2] ), parse( expr[3] ) )
 		end
 	end
 
@@ -170,7 +187,7 @@ function parse( expr::Array{Any} )
 		throw(LispError("Bad arity for known expression"))
 	end
 
-	args = map(parse_helper, expr[2:end])
+	args = map(parse_AE_helper, expr[2:end])
 	return FuncAppNode( parse(expr[1]), args )
 
 
