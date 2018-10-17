@@ -50,7 +50,7 @@ function with_helper(expr2)
 			throw(LispError("No AE following id in with"))
 		end
 		if haskey(dict, symbol)
-			throw(ListError("Can't have duplicate symbols in with"))
+			throw(LispError("Can't have duplicate symbols in with"))
 		end
 		ae = parse(expr2[i][2])
 		dict[symbol] = ae

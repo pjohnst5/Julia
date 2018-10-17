@@ -1,0 +1,11 @@
+function analyze(ast::AndNode)
+	f = x -> If0Node(x, NumNode(0), NumNode(1))
+	g = x, y -> If0Node( x.cond, NumNode(0), y)
+	root = mapfoldr(f, g, ast.clauses)
+	return analyze(root)
+end
+
+
+
+parse each thing in list
+map (x -> parse(x), expr[2:end])
