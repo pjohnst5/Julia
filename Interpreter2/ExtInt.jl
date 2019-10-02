@@ -115,7 +115,7 @@ end
 
 # <AE> ::= (with ( (id <AE>)* ) <AE>)
 struct WithNode <: AE
-	sym2AE::Dict{Symbol,AE}
+  sym2AE::Dict{Symbol,AE}
   body::AE
 end
 
